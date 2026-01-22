@@ -50,7 +50,7 @@ A Julia library for state estimation with:
 using Pkg
 Pkg.activate(".")
 include("src/renewal.jl")
-using LowLevelParticleFilters, Plots, Random
+using LowLevelParticleFilters, Plots, Random, Plots.Measures
 Random.seed!(1234)
 ```
 
@@ -216,7 +216,7 @@ Observed case counts from our simulated outbreak:
 scatter([y[1] for y in epi_data],
     xlabel = "Days",
     ylabel = "Cases",
-    size = (800, 400))
+    left_margin = 10mm)
 ```
 
 ## Running the Filter
@@ -254,7 +254,8 @@ q_lo = [weighted_quantiles(preds[t, :], sol.we[:, t], [0.1])[1] for t in 1:T]
 q_hi = [weighted_quantiles(preds[t, :], sol.we[:, t], [0.9])[1] for t in 1:T]
 
 plot(1:T, q50, ribbon=(q50 .- q_lo, q_hi .- q50), 
-    label="Filtered (80% CI)", fillalpha=0.3, lw=2)
+    label="Filtered (80% CI)", fillalpha=0.3, lw=2,
+    left_margin=10mm)
 scatter!(1:T, [y[1] for y in epi_data], label="Data", ms=3, alpha=0.7)
 xlabel!("Time")
 ylabel!("Cases")
@@ -281,7 +282,8 @@ Rt_q_hi = [weighted_quantiles(Rt_particles[t, :], sol.we[:, t], [0.9])[1] for t 
 Rt_true = [R0 * exp(pf_xs[t][end-2]) for t in 1:T]
 
 plot(1:T, Rt_q50, ribbon=(Rt_q50 .- Rt_q_lo, Rt_q_hi .- Rt_q50), 
-    label="Filtered Rt (80% CI)", fillalpha=0.3, lw=2)
+    label="Filtered Rt (80% CI)", fillalpha=0.3, lw=2,
+    left_margin=10mm)
 plot!(1:T, Rt_true, label="True Rt", lw=2, ls=:dash, color=:black)
 hline!([1.0], label="", ls=:dot, color=:gray)
 xlabel!("Time")
