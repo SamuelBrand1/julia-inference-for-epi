@@ -31,14 +31,14 @@ println("   ✓ All generation interval values non-negative ✓")
 
 # Test 3: Build time stepper
 println("\n3. Building time stepper...")
-stepper = build_time_stepper(model; Ts=1.0)
+stepper = build_time_stepper(model; Ts = 1.0)
 println("   ✓ Time stepper created")
 
 # Test 4: Run a single time step
 println("\n4. Testing single time step...")
 n_ages = length(ages)
 x0 = vcat(fill(1.0, n_ages), [0.0])  # Initial state: 1 infected at each age, 0 cumulative obs
-p = (Rt=1.5, pt=0.1)
+p = (Rt = 1.5, pt = 0.1)
 x1 = stepper(x0, nothing, p, 0.0)
 println("   ✓ State vector: $(length(x0)) → $(length(x1))")
 println("   ✓ Initial total infected: $(round(sum(x0[1:end-1]), digits=2))")
@@ -47,14 +47,14 @@ println("   ✓ Cumulative observations: $(round(x1[end], digits=4))")
 
 # Test 5: Build particle filter dynamics
 println("\n5. Building PF dynamics...")
-pf_dyn = build_renewal_dyn_pf(model; Ts=1.0)
+pf_dyn = build_renewal_dyn_pf(model; Ts = 1.0)
 println("   ✓ PF dynamics function created")
 
 # Test 6: Test PF dynamics (deterministic)
 println("\n6. Testing PF dynamics (deterministic)...")
 n_state = n_ages + 1 + 3  # ages + cumulative obs + log_Rt_mod + log_pt_mod + new_infs
 x0_pf = vcat(fill(1.0, n_ages), [0.0], [0.0, 0.0, 0.0])
-p_pf = (R0=1.5, p_obs=0.1, rho_p=0.9, sigma_p=0.1, rho_r=0.9, sigma_r=0.1)
+p_pf = (R0 = 1.5, p_obs = 0.1, rho_p = 0.9, sigma_p = 0.1, rho_r = 0.9, sigma_r = 0.1)
 x1_pf = pf_dyn(x0_pf, nothing, p_pf, 0.0, false)
 println("   ✓ Deterministic step: $(length(x0_pf)) → $(length(x1_pf))")
 

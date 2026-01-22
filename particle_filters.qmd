@@ -1,5 +1,5 @@
 ---
-title: "Particle Filtering for Epidemiological Models"
+title: "Some particle filtering for Epidemiological Models"
 subtitle: "Using LowLevelParticleFilters.jl in Julia"
 author: "Sam Brand"
 date: "2026-01-22"
@@ -215,7 +215,8 @@ Observed case counts from our simulated outbreak:
 #| eval: true
 scatter([y[1] for y in epi_data],
     xlabel = "Days",
-    ylabel = "Cases")
+    ylabel = "Cases",
+    size = (800, 400))
 ```
 
 ## Running the Filter
@@ -354,9 +355,9 @@ end
 
 # Set up optimization problem (derivative-free - can't AD through particle filter)
 θ0 = [log(0.8), logit(0.8)]  # Initial guess for [log(R0), logit(rho_r)]
-optf = OptimizationFunction(nll, Optimization.AutoFiniteDiff())
+optf = OptimizationFunction(nll)
 prob = OptimizationProblem(optf, θ0)
-result = solve(prob, LBFGS(); callback, maxiters = 5)
+result = solve(prob, NelderMead(); callback, maxiters = 5)
 ```
 
 ## Bayesian Inference (PMMH)

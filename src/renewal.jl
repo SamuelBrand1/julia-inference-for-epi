@@ -61,7 +61,6 @@ function build_renewal_dyn_pf(model::RenewalModel;
         integrator = SeeToDee.Rk4,
         Ts = 1.0,
         kwargs...)
-    
     time_stepper = build_time_stepper(model; integrator = integrator, Ts = Ts, kwargs...)
 
     function renewal_dynamics(x, u, p, t, noise = false)
@@ -71,8 +70,8 @@ function build_renewal_dyn_pf(model::RenewalModel;
             # unpack state
             x_state = @view x[1:(end - 3)]
             # modify Rt and pt with AR(1) process
-            log_Rt_mod = x[end-2] * rho_r + sigma_r * randn(rng)
-            log_pt_mod = x[end-1] * rho_p + sigma_p * randn(rng)
+            log_Rt_mod = x[end - 2] * rho_r + sigma_r * randn(rng)
+            log_pt_mod = x[end - 1] * rho_p + sigma_p * randn(rng)
             # compute Rt and pt
             Rt = R0 * exp(log_Rt_mod)
             pt = logistic(logit(p_obs) + log_pt_mod)
@@ -88,8 +87,8 @@ function build_renewal_dyn_pf(model::RenewalModel;
         else
             @unpack R0, p_obs, rho_p, sigma_p, rho_r, sigma_r = p
             x_state = @view x[1:(end - 3)]
-            log_Rt_mod = x[end-2]
-            log_pt_mod = x[end-1]
+            log_Rt_mod = x[end - 2]
+            log_pt_mod = x[end - 1]
             Rt = R0 * exp(log_Rt_mod)
             pt = logistic(logit(p_obs) + log_pt_mod)
             prev_cum_obs = x_state[end]
