@@ -1,0 +1,405 @@
+---
+title: "Particle Filtering for Epidemiological Models"
+subtitle: "Using LowLevelParticleFilters.jl in Julia"
+author: "Sam Brand"
+date: "2026-01-22"
+format: 
+  revealjs:
+    code-fold: show
+engine: julia
+---
+
+## Overview
+
+::: {.incremental}
+- **State estimation** Inferring hidden states from noisy observations rather than inference on a sequence of innovations
+- **Particle filters**: Sequential Monte Carlo for nonlinear, non-Gaussian systems
+- **Application**: Renewal models for infectious disease dynamics
+- **Tools**: LowLevelParticleFilters.jl — fast, flexible state estimation in Julia
+:::
+
+
+## Why Particle Filters?
+
+| Method | Linearity | Noise | Computation |
+|--------|-----------|-------|-------------|
+| Kalman Filter | Linear | Gaussian | Fast |
+| Extended KF | Weakly nonlinear | Gaussian | Fast |
+| Unscented KF | Nonlinear | Gaussian | Moderate |
+| **Particle Filter** | **Any** | **Any** | Heavier |
+
+::: {.fragment}
+Particle filters represent an empirical distribution approx rather than a distributional approx
+:::
+
+## LowLevelParticleFilters.jl
+
+A Julia library for state estimation with:
+
+::: {.incremental}
+- `ParticleFilter` — Standard bootstrap particle filter
+- `AdvancedParticleFilter` — Custom noise models
+- `AuxiliaryParticleFilter` — Improved proposal distribution
+- `KalmanFilter`, `UnscentedKalmanFilter`, `ExtendedKalmanFilter` _I mainly use these hence talking about something completely different_
+- Built-in **smoothing**, **parameter estimation**, and **visualization**
+:::
+
+```{julia}
+#| echo: false
+#| output: false
+using Pkg
+Pkg.activate(".")
+include("src/renewal.jl")
+using LowLevelParticleFilters, Plots, Random
+Random.seed!(1234)
+```
+
+
+
+## Setting Up the Filter
+
+Two key ingredients:
+
+1. **Dynamics function**: `dynamics(x, u, p, t) -> x_next`
+2. **Measurement function**: `measurement(x, u, p, t) -> y`
+
+```{julia}
+#| eval: false
+using LowLevelParticleFilters, Distributions
+
+
+
+# Define filter
+pf = ParticleFilter(N, dynamics, measurement, df, dg, d0)
+```
+
+## Basic Workflow
+
+```{julia}
+#| eval: false
+# Single filtering step
+pf(u[t], y[t])
+
+# Query particles and weights
+particles(pf)
+weights(pf)
+weighted_mean(pf)
+
+# Batch filtering
+sol = forward_trajectory(pf, u, y)
+```
+
+# The Renewal Model
+
+## Epidemiological Context
+
+I define the **renewal model** in the equivalent time-since-infection form $u(t,a)$:
+
+$$
+\begin{aligned}
+\partial_t u(t,a) + \partial_a u(t,a) & = 0 \\
+u(t, 0) & = R_t \int g(a) u(t,a) da \\
+\partial_t O(t) & = p_t \int_0^t H(a) u(t,a) da \\
+H(a) &= h(a) \exp\left(- \int_0^a h(a') da'\right)
+\end{aligned}
+$$
+
+## Model features
+
+::: {.incremental}
+- Current infectious population density by "infection age" $a$
+- Generation interval distribution $g(a)$
+- Time-varying reproduction number $R_t$
+- Solved by method of lines on upwind first-order stencil
+:::
+
+## Model Structure
+
+Define the Renewal model. Discretisation can/should be done with `CensoredDistributions`...
+
+```{julia}
+#| eval: true
+#| output: false
+
+mdl = RenewalModel(
+    da = 0.5, # time-since-infection grid stride
+    amax = 30.0, # max time-since-infection
+    gen_interval = Gamma(2.0, 3.0 / 2.0), # Gen interval in continuous form
+    obs_dist = Gamma(2.0, 7.0 / 2.0) #obs delay
+)
+
+```
+
+Key components:
+
+- **Generation interval** $g(\tau)$: Time from infection to transmission
+- **Observation delay**: Delay from infection to observation, converted into hazard form
+- **State vector**: Infectious population by age
+
+## Building the Dynamics
+
+The dynamics function does two things:
+
+- Propagates $R_t$ and $p_t$ according to AR(1) around a long-term average
+- Propagates the PDE solve using MOL implemented using [`SeeToDee.jl`](https://github.com/baggepinnen/SeeToDee.jl)
+
+```{julia}
+#| eval: true
+#| output: false
+dynamics = build_renewal_dyn_pf(mdl; supersample = 4)
+```
+
+::: {.notes}
+Explain the continuous-time ODE discretized with SeeToDee
+:::
+
+# Particle Filtering in Action
+
+## Setting Up the Filter for Renewal Model
+
+```{julia}
+#| eval: true
+#| output: false
+using LowLevelParticleFilters
+n_state = length(mdl.da:mdl.da:mdl.amax)
+
+d0_mean = vcat(
+    fill(100., n_state), # flat past infections
+    0., # initial cumulative obs
+    1.0, # initial modification on Rt: Big up deviation on long term dynamics
+    0., # initial modification on pt
+    0. # initial incident infections
+    )
+
+d0_Sigma = vcat(
+    fill(10., n_state), # flat past infections
+    1., # initial cumulative obs
+    0.01, # initial modification on Rt
+    1., # initial modification on pt
+    1., # initial incident infections
+    ) |> Diagonal
+
+renewal_d0 = MvNormal(d0_mean, d0_Sigma)
+
+renewal_pf = AdvancedParticleFilter(
+    1000, # Number of particles
+    dynamics, #Built above
+    renewal_meas_poi, # Poisson measurements
+    renewal_meas_ll, # Poisson ll
+    nothing, # Positional arg for additive noise not used
+    renewal_d0; # Initial distribution
+    p = (;R0 = 0.9, p_obs = 0.1, rho_p = 0.1, sigma_p = 0.05, rho_r = 0.9, sigma_r = 0.05), # External parameters
+    threads = false
+    )
+
+```
+
+## Sampling from the Filter
+
+We can simulate from the filter to generate synthetic epidemic data:
+
+```{julia}
+#| eval: true
+#| output: false
+
+n_steps = 50
+inputs = fill([], n_steps)
+pf_xs, sim_input, epi_data = simulate(renewal_pf,n_steps,inputs)
+```
+
+## Visualizing the Data
+
+Observed case counts from our simulated outbreak:
+
+```{julia}
+#| eval: true
+scatter([y[1] for y in epi_data],
+    xlabel = "Days",
+    ylabel = "Cases")
+```
+
+## Running the Filter
+
+Apply the particle filter to recover hidden states from observations:
+
+```{julia}
+sol = forward_trajectory(renewal_pf, sim_input, epi_data) # Filter whole trajectories at once
+x̂,ll = mean_trajectory(renewal_pf, sim_input, epi_data)
+```
+
+## Particle predictions vs data
+
+Comparing filtered predictions (with uncertainty) against observed data:
+
+```{julia}
+#| echo: false
+
+# Extract predicted observations from particles
+T = length(epi_data)
+N = size(sol.x, 1)
+
+# sol.x[i, t] is the state vector for particle i at time t
+# x[end] is the predicted observation (new_infs)
+preds = [sol.x[i, t][end] for t in 1:T, i in 1:N]  # T x N matrix
+
+# Compute weighted quantiles
+using StatsBase
+function weighted_quantiles(vals, weights, qs)
+    [quantile(vals, Weights(weights), q) for q in qs]
+end
+
+q50 = [weighted_quantiles(preds[t, :], sol.we[:, t], [0.5])[1] for t in 1:T]
+q_lo = [weighted_quantiles(preds[t, :], sol.we[:, t], [0.1])[1] for t in 1:T]
+q_hi = [weighted_quantiles(preds[t, :], sol.we[:, t], [0.9])[1] for t in 1:T]
+
+plot(1:T, q50, ribbon=(q50 .- q_lo, q_hi .- q50), 
+    label="Filtered (80% CI)", fillalpha=0.3, lw=2)
+scatter!(1:T, [y[1] for y in epi_data], label="Data", ms=3, alpha=0.7)
+xlabel!("Time")
+ylabel!("Cases")
+title!("Particle filter predictions vs observations")
+```
+
+## Rt estimation vs truth
+
+Recovering the time-varying reproduction number from noisy observations:
+
+```{julia}
+#| echo: false
+
+# Extract Rt from particles: Rt = R0 * exp(log_Rt_mod) where log_Rt_mod is x[end-2]
+R0 = 0.9  # from parameters
+Rt_particles = [R0 * exp(sol.x[i, t][end-2]) for t in 1:T, i in 1:N]  # T x N matrix
+
+# Compute weighted quantiles for Rt
+Rt_q50 = [weighted_quantiles(Rt_particles[t, :], sol.we[:, t], [0.5])[1] for t in 1:T]
+Rt_q_lo = [weighted_quantiles(Rt_particles[t, :], sol.we[:, t], [0.1])[1] for t in 1:T]
+Rt_q_hi = [weighted_quantiles(Rt_particles[t, :], sol.we[:, t], [0.9])[1] for t in 1:T]
+
+# True Rt from simulation
+Rt_true = [R0 * exp(pf_xs[t][end-2]) for t in 1:T]
+
+plot(1:T, Rt_q50, ribbon=(Rt_q50 .- Rt_q_lo, Rt_q_hi .- Rt_q50), 
+    label="Filtered Rt (80% CI)", fillalpha=0.3, lw=2)
+plot!(1:T, Rt_true, label="True Rt", lw=2, ls=:dash, color=:black)
+hline!([1.0], label="", ls=:dot, color=:gray)
+xlabel!("Time")
+ylabel!("Rt")
+title!("Reproduction number estimation; ll = $(round(sol.ll, digits = 2))")
+```
+
+## Debugging & Tuning
+
+LowLevelParticleFilters.jl provides diagnostic tools:
+
+```{julia}
+#| eval: false
+# Debug plot shows particles, weights, and measurements
+debugplot(pf, u, y, xreal=x)
+```
+
+::: {.fragment}
+Key tuning parameters:
+
+- Number of particles $N$
+- Process noise covariance
+- Measurement noise covariance
+- Resampling threshold
+:::
+
+# Extra features
+
+## Particle Smoothing
+
+Estimate states using **both past and future** observations:
+
+```{julia}
+#| eval: false
+# Forward-Filtering Backward-Simulation
+xb, ll = smooth(pf, M, u, y)
+xbm = smoothed_mean(xb)
+xbc = smoothed_cov(xb)
+```
+
+## Parameter Estimation
+
+Estimate model parameters alongside states:
+
+```{julia}
+#| eval: true
+using Optimization, OptimizationOptimJL
+
+# Maximum likelihood via particle filter
+function filter_from_parameters(x)
+    p = (;R0 = exp(x[1]), p_obs = 0.1, rho_p = 0.1, sigma_p = 0.05, rho_r = logistic(x[2]), sigma_r = 0.05)
+    AdvancedParticleFilter(
+        1000, dynamics, renewal_meas_poi, renewal_meas_ll, nothing, renewal_d0; p, threads = false
+    )
+end
+
+# Define objective (negative log-likelihood)
+function nll(x, _)
+    try 
+        return -loglik(filter_from_parameters(x), sim_input, epi_data)
+    catch
+       return Inf
+    end
+end
+
+# Callback to monitor optimization progress
+function callback(state, loss)
+    println("Iteration $(state.iter): neg-ll = $(loss)")
+    return false  # Continue optimization
+end
+
+# Set up optimization problem (derivative-free - can't AD through particle filter)
+θ0 = [log(0.8), logit(0.8)]  # Initial guess for [log(R0), logit(rho_r)]
+optf = OptimizationFunction(nll, Optimization.AutoFiniteDiff())
+prob = OptimizationProblem(optf, θ0)
+result = solve(prob, LBFGS(); callback, maxiters = 5)
+```
+
+## Bayesian Inference (PMMH)
+
+Full posterior distribution via Metropolis-Hastings. I've diff-able KF also done this with 
+
+- [`Turing.jl`](https://turinglang.org/)
+- [`Pathfinder.jl`](https://github.com/mlcolab/Pathfinder.jl)
+- [`Gen.jl`](https://github.com/probcomp/Gen.jl)
+
+```{julia}
+#| eval: false
+# Particle Marginal Metropolis-Hastings
+chains = metropolis(filter_from_parameters, n_samples, θ0, proposal)
+```
+
+# Summary
+
+## Key Takeaways
+
+::: {.incremental}
+1. **Particle filters** can work pretty well for Renewal models
+2. **LowLevelParticleFilters.jl** provides a flexible, performant implementation. IMO, **most underrated julia ecosystem**
+3. Extensions to **smoothing** and **parameter estimation** are straightforward(ish)
+4. I think the approximate Kalman filters with fast autodiffable hyperparameter estimation are worth a look
+:::
+
+## Resources for this talk
+
+- **LowLevelParticleFilters.jl docs**: [baggepinnen.github.io/LowLevelParticleFilters.jl](https://baggepinnen.github.io/LowLevelParticleFilters.jl/stable/)
+- **Optimization.jl docs** [https://github.com/SciML/Optimization.jl]
+- **SeeToDee.jl**: Discretization of continuous-time dynamics
+- **This code**: [github.com/SamuelBrand1/julia-inference-for-epi](https://github.com/SamuelBrand1/julia-inference-for-epi)
+
+## Other things
+
+- Partial Integral differential Equations [here](https://docs.sciml.ai/MethodOfLines/stable/tutorials/PIDE/)
+- Algebraic Petri [here](https://algebraicjulia.github.io/AlgebraicPetri.jl/dev/generated/epidemiology/stratification/)
+
+## Questions?
+
+```{julia}
+#| echo: false
+#| output: false
+# Placeholder for any final setup
+```

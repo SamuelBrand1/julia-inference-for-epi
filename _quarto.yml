@@ -1,0 +1,21 @@
+project:
+  type: default
+  output-dir: docs
+
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    preview-links: auto
+    code-fold: true
+    code-tools: true
+    highlight-style: github
+    width: 1280
+    height: 720
+    margin: 0.1
+    transition: slide
+    background-transition: fade
+
+execute:
+  echo: true
+  warning: false
